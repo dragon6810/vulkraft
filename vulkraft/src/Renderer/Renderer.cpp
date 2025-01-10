@@ -9,12 +9,91 @@
 #define RENDERER_DEVICE_COUNT 1
 #define RENDERER_DEVICE_GFX 0
 
+#define RENDERER_USE_VALIDATION_LAYERS true
+
+void Renderer::VulkanAssertImpl(VkResult result, const char* expr, const char* file, int line)
+{
+    const char *errorstr;
+
+    if (result == VK_SUCCESS)
+        return;
+
+    switch (result) 
+    {
+        case VK_NOT_READY: errorstr = "VK_NOT_READY"; break;
+        case VK_TIMEOUT: errorstr = "VK_TIMEOUT"; break;
+        case VK_EVENT_SET: errorstr = "VK_EVENT_SET"; break;
+        case VK_EVENT_RESET: errorstr = "VK_EVENT_RESET"; break;
+        case VK_INCOMPLETE: errorstr = "VK_INCOMPLETE"; break;
+        case VK_ERROR_OUT_OF_HOST_MEMORY: errorstr = "VK_ERROR_OUT_OF_HOST_MEMORY"; break;
+        case VK_ERROR_OUT_OF_DEVICE_MEMORY: errorstr = "VK_ERROR_OUT_OF_DEVICE_MEMORY"; break;
+        case VK_ERROR_INITIALIZATION_FAILED: errorstr = "VK_ERROR_INITIALIZATION_FAILED"; break;
+        case VK_ERROR_DEVICE_LOST: errorstr = "VK_ERROR_DEVICE_LOST"; break;
+        case VK_ERROR_MEMORY_MAP_FAILED: errorstr = "VK_ERROR_MEMORY_MAP_FAILED"; break;
+        case VK_ERROR_LAYER_NOT_PRESENT: errorstr = "VK_ERROR_LAYER_NOT_PRESENT"; break;
+        case VK_ERROR_EXTENSION_NOT_PRESENT: errorstr = "VK_ERROR_EXTENSION_NOT_PRESENT"; break;
+        case VK_ERROR_FEATURE_NOT_PRESENT: errorstr = "VK_ERROR_FEATURE_NOT_PRESENT"; break;
+        case VK_ERROR_INCOMPATIBLE_DRIVER: errorstr = "VK_ERROR_INCOMPATIBLE_DRIVER"; break;
+        case VK_ERROR_TOO_MANY_OBJECTS: errorstr = "VK_ERROR_TOO_MANY_OBJECTS"; break;
+        case VK_ERROR_FORMAT_NOT_SUPPORTED: errorstr = "VK_ERROR_FORMAT_NOT_SUPPORTED"; break;
+        case VK_ERROR_FRAGMENTED_POOL: errorstr = "VK_ERROR_FRAGMENTED_POOL"; break;
+        case VK_ERROR_UNKNOWN: errorstr = "VK_ERROR_UNKNOWN"; break;
+        default: errorstr = "UNKNOWN_ERROR_CODE"; break;
+    }
+
+    // Print error message and terminate
+    fprintf(stderr, "Vulkan assertion failed!\n");
+    fprintf(stderr, "Error: %s (code: %d)\n", errorstr, result);
+    fprintf(stderr, "Expression: %s\n", expr);
+    fprintf(stderr, "File: %s\n", file);
+    fprintf(stderr, "Line: %d\n", line);
+    exit(EXIT_FAILURE);
+}
+
+void MakeCommandBuffers(void)
+{
+
+}
+
+void Renderer::MakeDeviceCommandPools(device_t* device)
+{
+    int i, q;
+
+    VkCommandPoolCreateInfo createinfo;
+
+    for(q=0; q<device->cmdpools.size(); q++)
+    {
+        device->cmdpools[q].resize(RENDERER_THREAD_COUNT);
+        for(i=0; i<device->cmdpools[q].size(); i++)
+        {
+            createinfo = {};
+            createinfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+            createinfo.pNext = nullptr;
+            createinfo.flags = 0;
+            createinfo.queueFamilyIndex = device->queues[q].familyindex;
+
+            VulkanAssert(vkCreateCommandPool(device->logicaldevice, &createinfo, nullptr, &device->cmdpools[q][i]));
+        }
+    }
+}
+
+void Renderer::MakeCommandPools(void)
+{
+    int i;
+
+    for(i=0; i<this->devices.size(); i++)
+        MakeDeviceCommandPools(&this->devices[i]);
+}
+
 void Renderer::MakeLogicalDevices(void)
 {
     int i, j;
 
     VkDeviceCreateInfo createinfo;
     std::vector<VkDeviceQueueCreateInfo> queuecreateinfos;
+    uint32_t nextensions;
+    std::vector<VkExtensionProperties> extensions;
+    std::vector<char*> extensionnames;
 
     assert(this->devices.size() == RENDERER_DEVICE_COUNT);
 
@@ -31,7 +110,20 @@ void Renderer::MakeLogicalDevices(void)
         createinfo.queueCreateInfoCount = queuecreateinfos.size();
         createinfo.pQueueCreateInfos = queuecreateinfos.data();
 
-        assert(vkCreateDevice(*this->devices[i].physicaldevice, &createinfo, nullptr, &this->devices[i].logicaldevice) == VK_SUCCESS);
+        if(RENDERER_USE_VALIDATION_LAYERS)
+        {
+            createinfo.enabledLayerCount = validationlayers.size();
+            createinfo.ppEnabledLayerNames = validationlayers.data();
+        }
+
+        #ifdef MACOS
+            extensionnames.push_back("VK_KHR_portability_subset");
+        #endif
+
+        createinfo.enabledExtensionCount = extensionnames.size();
+        createinfo.ppEnabledExtensionNames = extensionnames.data();
+
+        VulkanAssert(vkCreateDevice(*this->devices[i].physicaldevice, &createinfo, nullptr, &this->devices[i].logicaldevice));
     }
 }
 
@@ -170,9 +262,9 @@ void Renderer::FindPhysicalDevices(void)
 {
     uint32_t ndevices;
 
-    assert(vkEnumeratePhysicalDevices(this->vkinstance, &ndevices, nullptr) == VK_SUCCESS);
+    VulkanAssert(vkEnumeratePhysicalDevices(this->vkinstance, &ndevices, nullptr));
     this->allphysicaldevices.resize(ndevices);
-    assert(vkEnumeratePhysicalDevices(this->vkinstance, &ndevices, this->allphysicaldevices.data()) == VK_SUCCESS);
+    VulkanAssert(vkEnumeratePhysicalDevices(this->vkinstance, &ndevices, this->allphysicaldevices.data()));
 }
 
 void Renderer::MakeVkInstance(void)
@@ -190,6 +282,7 @@ void Renderer::MakeVkInstance(void)
     for(i=0; i<nglfwexts; i++)
         exts[i] = glfwexts[i];
     exts.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+    exts.push_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
 
     appinfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
     appinfo.pNext = nullptr;
@@ -206,7 +299,13 @@ void Renderer::MakeVkInstance(void)
     createinfo.enabledExtensionCount = exts.size();
     createinfo.ppEnabledExtensionNames = exts.data();
 
-    assert(vkCreateInstance(&createinfo, nullptr, &this->vkinstance) == VK_SUCCESS);
+    if(RENDERER_USE_VALIDATION_LAYERS)
+    {
+        createinfo.enabledLayerCount = validationlayers.size();
+        createinfo.ppEnabledLayerNames = validationlayers.data();
+    }
+
+    VulkanAssert(vkCreateInstance(&createinfo, nullptr, &this->vkinstance));
 }
 
 void Renderer::MakeVulkan(void)
@@ -219,6 +318,7 @@ void Renderer::MakeVulkan(void)
     ChooseDeviceQueueFamilies();
     MakeQueues();
     MakeLogicalDevices();
+    MakeCommandPools();
 }
 
 void Renderer::MakeWindow(void)
