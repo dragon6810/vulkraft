@@ -5,15 +5,26 @@
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
 
+#define RENDERER_QUEUE_COUNT 3
+#define RENDERER_QUEUE_GRAPHICS 0
+#define RENDERER_QUEUE_COMPUTE 1
+#define RENDERER_QUEUE_TRANSFER 2
+
 class Renderer
 {
 private:
+    typedef struct queue_s
+    {
+        int familyindex;
+        VkDeviceQueueCreateInfo createinfo;
+    } queue_t;
+
     typedef struct device_s
     {
         VkPhysicalDevice *physicaldevice;
         VkDevice logicaldevice;
 
-        int queuefamilyindex;
+        std::array<queue_t, RENDERER_QUEUE_COUNT> queues;
     } device_t;
 private:
     bool initialized = false;
@@ -36,6 +47,8 @@ private:
     void PrintPhysicalDeviceInfo(VkPhysicalDevice* device);
     void ChoosePhysicalDevice(void);
     void ChooseDeviceQueueFamilies(void);
+    void MakeQueues(void);
+    void MakeDeviceQueues(device_t* device);
     void MakeLogicalDevices(void);
 public:
     void Initialize(void);

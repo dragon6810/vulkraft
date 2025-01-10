@@ -11,14 +11,58 @@
 
 void Renderer::MakeLogicalDevices(void)
 {
+    int i, j;
+
     VkDeviceCreateInfo createinfo;
+    std::vector<VkDeviceQueueCreateInfo> queuecreateinfos;
 
     assert(this->devices.size() == RENDERER_DEVICE_COUNT);
 
-    createinfo = {};
-    createinfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-    createinfo.pNext = nullptr;
-    createinfo.flags = 0;
+    for(i=0; i<this->devices.size(); i++)
+    {
+        queuecreateinfos.resize(this->devices[i].queues.size());
+        for(j=0; j<queuecreateinfos.size(); j++)
+            queuecreateinfos[j] = this->devices[i].queues[j].createinfo;
+        
+        createinfo = {};
+        createinfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+        createinfo.pNext = nullptr;
+        createinfo.flags = 0;
+        createinfo.queueCreateInfoCount = queuecreateinfos.size();
+        createinfo.pQueueCreateInfos = queuecreateinfos.data();
+
+        assert(vkCreateDevice(*this->devices[i].physicaldevice, &createinfo, nullptr, &this->devices[i].logicaldevice) == VK_SUCCESS);
+    }
+}
+
+void Renderer::MakeDeviceQueues(device_t* device)
+{
+    int i;
+
+    queue_t *curqueue;
+    float priority;
+
+    priority = 0.5;
+    for(i=0; i<device->queues.size(); i++)
+    {
+        curqueue = &device->queues[i];
+
+        curqueue->createinfo = {};
+        curqueue->createinfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        curqueue->createinfo.pNext = nullptr;
+        curqueue->createinfo.flags = 0;
+        curqueue->createinfo.queueFamilyIndex = curqueue->familyindex;
+        curqueue->createinfo.queueCount = 1;
+        curqueue->createinfo.pQueuePriorities = &priority;
+    }   
+}
+
+void Renderer::MakeQueues(void)
+{
+    int i;
+
+    for(i=0; i<this->devices.size(); i++)
+        MakeDeviceQueues(&this->devices[i]);
 }
 
 void Renderer::ChooseDeviceQueueFamilies(void)
@@ -35,6 +79,9 @@ void Renderer::ChooseDeviceQueueFamilies(void)
         vkGetPhysicalDeviceQueueFamilyProperties(*this->devices[i].physicaldevice, &nfamilyprops, nullptr);
         familyprops.resize(nfamilyprops);
         vkGetPhysicalDeviceQueueFamilyProperties(*this->devices[i].physicaldevice, &nfamilyprops, familyprops.data());
+        this->devices[i].queues[RENDERER_QUEUE_GRAPHICS].familyindex = 0;
+        this->devices[i].queues[RENDERER_QUEUE_COMPUTE].familyindex = 1;
+        this->devices[i].queues[RENDERER_QUEUE_TRANSFER].familyindex = 2;
         for(j=0; j<familyprops.size(); j++)
         {
             if(RENDERER_VERBOSE_LOGGING)
@@ -170,6 +217,7 @@ void Renderer::MakeVulkan(void)
         PrintPhysicalDevicesInfo();
     ChoosePhysicalDevice();
     ChooseDeviceQueueFamilies();
+    MakeQueues();
     MakeLogicalDevices();
 }
 
