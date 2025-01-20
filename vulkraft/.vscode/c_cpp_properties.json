@@ -6,7 +6,8 @@
                 "${workspaceFolder}/**",
                 "${workspaceFolder}/src",
                 "/usr/local/include",
-                "/opt/homebrew/Cellar/glfw/3.4/include"
+                "/opt/homebrew/Cellar/glfw/3.4/include",
+                "${workspaceFolder}/lib/vkbootstrap/inc"
             ],
             "defines": [],
             "macFrameworkPath": [

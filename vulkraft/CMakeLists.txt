@@ -25,16 +25,21 @@ find_path(GLM_INCLUDE_DIR glm/glm.hpp)
 include_directories(${Vulkan_INCLUDE_DIRS})
 include_directories(${GLFW_INCLUDE_DIRS})
 include_directories(${GLM_INCLUDE_DIR})
+include_directories(lib/vkbootstrap/inc)
 include_directories(src/)
 
 # Source files
-file(GLOB_RECURSE SOURCES src/*.cpp)
+file(GLOB_RECURSE SOURCES src/*.cpp lib/vkbootstrap/src/*.cpp)
 
 # Add executable
 add_executable(vulkraft ${SOURCES})
 
 # Link libraries
 target_link_libraries(vulkraft PRIVATE Vulkan::Vulkan glfw)
+
+# Use address sanitizer
+target_compile_options(vulkraft PRIVATE -fsanitize=address)
+target_link_options(vulkraft PRIVATE -fsanitize=address)
 
 # Add custom settings for macOS and Linux
 if(APPLE)

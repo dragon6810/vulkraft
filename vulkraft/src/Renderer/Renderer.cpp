@@ -4,6 +4,10 @@
 #include <assert.h>
 #include <vector>
 
+#include <VkBootstrap.h>
+
+#include <Testing/Testing.h>
+
 #define RENDERER_DOVALIDATIONLAYERS true
 #define RENDERER_VERBOSE_LOGGING true
 #define RENDERER_DEVICE_COUNT 1
@@ -50,275 +54,131 @@ void Renderer::VulkanAssertImpl(VkResult result, const char* expr, const char* f
     exit(EXIT_FAILURE);
 }
 
-void MakeCommandBuffers(void)
-{
-
-}
-
-void Renderer::MakeDeviceCommandPools(device_t* device)
-{
-    int i, q;
-
-    VkCommandPoolCreateInfo createinfo;
-
-    for(q=0; q<device->cmdpools.size(); q++)
-    {
-        device->cmdpools[q].resize(RENDERER_THREAD_COUNT);
-        for(i=0; i<device->cmdpools[q].size(); i++)
-        {
-            createinfo = {};
-            createinfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-            createinfo.pNext = nullptr;
-            createinfo.flags = 0;
-            createinfo.queueFamilyIndex = device->queues[q].familyindex;
-
-            VulkanAssert(vkCreateCommandPool(device->logicaldevice, &createinfo, nullptr, &device->cmdpools[q][i]));
-        }
-    }
-}
-
-void Renderer::MakeCommandPools(void)
+void Renderer::DestroySwapchain(void)
 {
     int i;
 
-    for(i=0; i<this->devices.size(); i++)
-        MakeDeviceCommandPools(&this->devices[i]);
+    vkDestroySwapchainKHR(this->vkdevice, this->swapchain, NULL);
+    for(i=0; i<this->swapchainimageviews.size(); i++)
+        vkDestroyImageView(this->vkdevice, this->swapchainimageviews[i], NULL);
 }
 
-void Renderer::MakeLogicalDevices(void)
-{
-    int i, j;
-
-    VkDeviceCreateInfo createinfo;
-    std::vector<VkDeviceQueueCreateInfo> queuecreateinfos;
-    uint32_t nextensions;
-    std::vector<VkExtensionProperties> extensions;
-    std::vector<char*> extensionnames;
-
-    assert(this->devices.size() == RENDERER_DEVICE_COUNT);
-
-    for(i=0; i<this->devices.size(); i++)
-    {
-        queuecreateinfos.resize(this->devices[i].queues.size());
-        for(j=0; j<queuecreateinfos.size(); j++)
-            queuecreateinfos[j] = this->devices[i].queues[j].createinfo;
-        
-        createinfo = {};
-        createinfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-        createinfo.pNext = nullptr;
-        createinfo.flags = 0;
-        createinfo.queueCreateInfoCount = queuecreateinfos.size();
-        createinfo.pQueueCreateInfos = queuecreateinfos.data();
-
-        if(RENDERER_USE_VALIDATION_LAYERS)
-        {
-            createinfo.enabledLayerCount = validationlayers.size();
-            createinfo.ppEnabledLayerNames = validationlayers.data();
-        }
-
-        #ifdef MACOS
-            extensionnames.push_back("VK_KHR_portability_subset");
-        #endif
-
-        createinfo.enabledExtensionCount = extensionnames.size();
-        createinfo.ppEnabledExtensionNames = extensionnames.data();
-
-        VulkanAssert(vkCreateDevice(*this->devices[i].physicaldevice, &createinfo, nullptr, &this->devices[i].logicaldevice));
-    }
-}
-
-void Renderer::MakeDeviceQueues(device_t* device)
+void Renderer::Cleanup(void)
 {
     int i;
 
-    queue_t *curqueue;
-    float priority;
+    // TODO: Finish
 
-    priority = 0.5;
-    for(i=0; i<device->queues.size(); i++)
-    {
-        curqueue = &device->queues[i];
-
-        curqueue->createinfo = {};
-        curqueue->createinfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-        curqueue->createinfo.pNext = nullptr;
-        curqueue->createinfo.flags = 0;
-        curqueue->createinfo.queueFamilyIndex = curqueue->familyindex;
-        curqueue->createinfo.queueCount = 1;
-        curqueue->createinfo.pQueuePriorities = &priority;
-    }   
+    DestroySwapchain();
+    vkDestroyDevice(this->vkdevice, NULL);
+    vkDestroySurfaceKHR(this->vkinstance, this->surface, NULL);
+    vkb::destroy_debug_utils_messenger(this->vkinstance, this->debugmessenger);
+    vkDestroyInstance(this->vkinstance, NULL);
+    glfwDestroyWindow(win);
+    glfwTerminate();
 }
 
-void Renderer::MakeQueues(void)
+void Renderer::MakeSwapchain(int w, int h)
 {
-    int i;
+    vkb::SwapchainBuilder builder { this->vkphysicaldevice, this->vkdevice, this->surface };
+    vkb::Swapchain vkbswapchain;
 
-    for(i=0; i<this->devices.size(); i++)
-        MakeDeviceQueues(&this->devices[i]);
+    this->swapchainimgformat = VK_FORMAT_B8G8R8A8_UNORM;
+
+    builder.set_desired_format(VkSurfaceFormatKHR { .format = this->swapchainimgformat, .colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR });
+    builder.set_desired_present_mode(VK_PRESENT_MODE_FIFO_KHR);
+    builder.set_desired_extent(w, h);
+    builder.add_image_usage_flags(VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+
+    vkbswapchain = builder.build().value();
+    this->swapchainextent = vkbswapchain.extent;
+    this->swapchainimages = vkbswapchain.get_images().value();
+    this->swapchainimageviews = vkbswapchain.get_image_views().value();
 }
 
-void Renderer::ChooseDeviceQueueFamilies(void)
+void Renderer::MakeDevice(void)
 {
-    int i, j;
+    VkPhysicalDeviceSynchronization2Features sync2features{};
+    VkPhysicalDeviceVulkan12Features features12;
+    vkb::PhysicalDeviceSelector selector { this->vkbinstance };
+    vkb::Result<vkb::PhysicalDevice> selectres { vkb::Error() };
+    vkb::PhysicalDevice vkbphysicaldevice;
+    vkb::DeviceBuilder builder { vkbphysicaldevice };
+    vkb::Device vkbdevice;
 
-    std::vector<VkQueueFamilyProperties> familyprops;
-    uint32_t nfamilyprops;
+    sync2features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR;
+    sync2features.pNext = NULL;
+    sync2features.synchronization2 = true;
+
+    features12 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES };
+    features12.bufferDeviceAddress = true;
+    features12.descriptorIndexing = true;
+
+    selector.set_minimum_version(1, 2);
+    selector.set_required_features_12(features12);
+    selector.add_required_extension(VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME);
+    selector.add_required_extension(VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME);
+    selector.add_required_extension(VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME);
+    selector.add_required_extension(VK_KHR_MULTIVIEW_EXTENSION_NAME);
+    selector.add_required_extension(VK_KHR_MAINTENANCE_2_EXTENSION_NAME);
+    selector.add_required_extension(VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME);
+    selector.add_required_extension_features(sync2features);
+    selector.set_surface(this->surface);
+
+    selectres = selector.select();
+
+    VulkraftAssert(selectres);
+
+    vkbphysicaldevice = selectres.value();
+    builder = vkb::DeviceBuilder(vkbphysicaldevice);
+    vkbdevice = builder.build().value();
     
-    assert(this->devices.size() == RENDERER_DEVICE_COUNT);
-
-    for(i=0; i<this->devices.size(); i++)
-    {
-        vkGetPhysicalDeviceQueueFamilyProperties(*this->devices[i].physicaldevice, &nfamilyprops, nullptr);
-        familyprops.resize(nfamilyprops);
-        vkGetPhysicalDeviceQueueFamilyProperties(*this->devices[i].physicaldevice, &nfamilyprops, familyprops.data());
-        this->devices[i].queues[RENDERER_QUEUE_GRAPHICS].familyindex = 0;
-        this->devices[i].queues[RENDERER_QUEUE_COMPUTE].familyindex = 1;
-        this->devices[i].queues[RENDERER_QUEUE_TRANSFER].familyindex = 2;
-        for(j=0; j<familyprops.size(); j++)
-        {
-            if(RENDERER_VERBOSE_LOGGING)
-            {
-                printf("queue family %d:\n", j);
-                printf("    queue count: %u.\n", familyprops[j].queueCount);
-                printf("    type:\n");
-                if(familyprops[j].queueFlags & VK_QUEUE_GRAPHICS_BIT)
-                    printf("        graphics.\n");
-                if(familyprops[j].queueFlags & VK_QUEUE_COMPUTE_BIT)
-                    printf("        compute.\n");
-                if(familyprops[j].queueFlags & VK_QUEUE_TRANSFER_BIT)
-                    printf("        transfer.\n");
-                if(familyprops[j].queueFlags & VK_QUEUE_SPARSE_BINDING_BIT)
-                    printf("        sparse binding.\n");
-                if(familyprops[j].queueFlags & VK_QUEUE_PROTECTED_BIT)
-                    printf("        protected.\n");
-                if(familyprops[j].queueFlags & VK_QUEUE_VIDEO_DECODE_BIT_KHR)
-                    printf("        video decode.\n");
-                if(familyprops[j].queueFlags & VK_QUEUE_VIDEO_ENCODE_BIT_KHR)
-                    printf("        video encode.\n");
-                if(familyprops[j].queueFlags & VK_QUEUE_OPTICAL_FLOW_BIT_NV)
-                    printf("        optical flow.\n");
-            }
-        }
-    }
+    this->vkphysicaldevice = vkbdevice.physical_device;
+    this->vkdevice = vkbdevice.device;
 }
 
-void Renderer::ChoosePhysicalDevice(void)
+void Renderer::MakeSurface(void)
 {
-    assert(this->allphysicaldevices.data());
-
-    this->devices.resize(RENDERER_DEVICE_COUNT);
-
-    // TODO: make a heuristic or something to choose a good device
-
-    this->devices[RENDERER_DEVICE_GFX].physicaldevice = &this->allphysicaldevices[0];
-}
-
-void Renderer::PrintPhysicalDeviceInfo(VkPhysicalDevice* device)
-{
-    VkPhysicalDeviceProperties props;
-
-    assert(device);
-
-    vkGetPhysicalDeviceProperties(*device, &props);
-
-    printf("physical device \"%s\":\n", props.deviceName);
-    printf("    type: ");
-    switch(props.deviceType)
-    {
-    case VK_PHYSICAL_DEVICE_TYPE_OTHER:
-        printf("unkown.\n");
-        break;
-    case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU:
-        printf("integrated gpu.\n");
-        break;
-    case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:
-        printf("discrete gpu.\n");
-        break;
-    case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:
-        printf("virtual gpu.\n");
-        break;
-    case VK_PHYSICAL_DEVICE_TYPE_CPU:
-        printf("cpu.\n");
-        break;
-    }
-    printf("    limits:\n");
-    printf("        max 1d image dimension: %u.\n", props.limits.maxImageDimension1D);
-    printf("        max 2d image dimension: %u.\n", props.limits.maxImageDimension2D);
-    printf("        max 3d image dimension: %u.\n", props.limits.maxImageDimension3D);
-    printf("        max image array layers: %u.\n", props.limits.maxImageArrayLayers);
-    printf("        max framebuffer width: %u.\n", props.limits.maxFramebufferWidth);
-    printf("        max framebuffer height: %u.\n", props.limits.maxFramebufferHeight);
-}
-
-void Renderer::PrintPhysicalDevicesInfo(void)
-{
-    int i;
-
-    for(i=0; i<this->allphysicaldevices.size(); i++)
-        PrintPhysicalDeviceInfo(&this->allphysicaldevices[i]);
-}
-
-void Renderer::FindPhysicalDevices(void)
-{
-    uint32_t ndevices;
-
-    VulkanAssert(vkEnumeratePhysicalDevices(this->vkinstance, &ndevices, nullptr));
-    this->allphysicaldevices.resize(ndevices);
-    VulkanAssert(vkEnumeratePhysicalDevices(this->vkinstance, &ndevices, this->allphysicaldevices.data()));
+    VulkanAssert(glfwCreateWindowSurface(this->vkinstance, this->win, NULL, &this->surface));
 }
 
 void Renderer::MakeVkInstance(void)
 {
     int i;
 
-    unsigned int nglfwexts;
-    const char **glfwexts;
-    std::vector<const char*> exts;
-    VkInstanceCreateInfo createinfo{};
-    VkApplicationInfo appinfo{};
+    vkb::InstanceBuilder builder;
+    vkb::Result<vkb::Instance> buildres { vkb::Error() };
 
-    glfwexts = glfwGetRequiredInstanceExtensions(&nglfwexts);
-    exts.resize(nglfwexts);
-    for(i=0; i<nglfwexts; i++)
-        exts[i] = glfwexts[i];
-    exts.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
-    exts.push_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
+    builder.set_app_name("vulkraft");
+    builder.request_validation_layers(RENDERER_USE_VALIDATION_LAYERS);
+    builder.use_default_debug_messenger();
+    builder.require_api_version(1, 2, 0);
+    
+#ifdef MACOS
+    builder.enable_extension("VK_EXT_metal_surface");
+    builder.enable_extension(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+#endif
 
-    appinfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    appinfo.pNext = nullptr;
-    appinfo.pApplicationName = "vulkraft";
-    appinfo.applicationVersion = 1;
-    appinfo.pEngineName = "vulkraft engine";
-    appinfo.engineVersion = 1;
-    appinfo.apiVersion = VK_API_VERSION_1_3;
+    buildres = builder.build();
+    VulkraftAssert(buildres);
 
-    createinfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-    createinfo.pNext = nullptr;
-    createinfo.flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
-    createinfo.pApplicationInfo = &appinfo;
-    createinfo.enabledExtensionCount = exts.size();
-    createinfo.ppEnabledExtensionNames = exts.data();
+    this->vkbinstance = buildres.value();
 
-    if(RENDERER_USE_VALIDATION_LAYERS)
-    {
-        createinfo.enabledLayerCount = validationlayers.size();
-        createinfo.ppEnabledLayerNames = validationlayers.data();
-    }
+    this->vkinstance = this->vkbinstance.instance;
+    this->debugmessenger = this->vkbinstance.debug_messenger;
 
-    VulkanAssert(vkCreateInstance(&createinfo, nullptr, &this->vkinstance));
+    return;
 }
 
 void Renderer::MakeVulkan(void)
 {
+    int w, h;
+
     MakeVkInstance();
-    FindPhysicalDevices();
-    if(RENDERER_VERBOSE_LOGGING)
-        PrintPhysicalDevicesInfo();
-    ChoosePhysicalDevice();
-    ChooseDeviceQueueFamilies();
-    MakeQueues();
-    MakeLogicalDevices();
-    MakeCommandPools();
+    MakeSurface();
+    MakeDevice();
+    glfwGetWindowSize(win, &w, &h);
+    MakeSwapchain(w, h);
 }
 
 void Renderer::MakeWindow(void)
@@ -328,12 +188,12 @@ void Renderer::MakeWindow(void)
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 
-    this->win = glfwCreateWindow(this->windowdims.width, this->windowdims.height, "vulkraft", nullptr, nullptr);
+    this->win = glfwCreateWindow(1280, 720, "vulkraft", nullptr, nullptr);
 }
 
 void Renderer::Kill(void)
 {
-
+    Cleanup();
 }
 
 void Renderer::Launch(void)
