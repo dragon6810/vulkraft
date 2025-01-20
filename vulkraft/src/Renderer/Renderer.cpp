@@ -54,6 +54,11 @@ void Renderer::VulkanAssertImpl(VkResult result, const char* expr, const char* f
     exit(EXIT_FAILURE);
 }
 
+Renderer::FrameData* Renderer::GetFrame(void)
+{
+    return &this->frames[this->curframe % RENDERER_MAX_FIF];
+}
+
 void Renderer::DestroySwapchain(void)
 {
     int i;
@@ -67,7 +72,13 @@ void Renderer::Cleanup(void)
 {
     int i;
 
-    // TODO: Finish
+    if(!this->initialized)
+        return;
+
+    vkDeviceWaitIdle(this->vkdevice);
+
+    for(i=0; i<RENDERER_MAX_FIF; i++)
+        vkDestroyCommandPool(this->vkdevice, this->frames[i].cmdpool, NULL);
 
     DestroySwapchain();
     vkDestroyDevice(this->vkdevice, NULL);
@@ -76,6 +87,34 @@ void Renderer::Cleanup(void)
     vkDestroyInstance(this->vkinstance, NULL);
     glfwDestroyWindow(win);
     glfwTerminate();
+}
+
+void Renderer::MakeCommandStructures(void)
+{
+    int i;
+
+    VkCommandPoolCreateInfo poolcreateinfo;
+    VkCommandBufferAllocateInfo buffallocinfo;
+
+    poolcreateinfo = {};
+    poolcreateinfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    poolcreateinfo.pNext = NULL;
+    poolcreateinfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    poolcreateinfo.queueFamilyIndex = this->queues[RENDERER_QUEUE_GRAPHICS].family;
+
+    for(i=0; i<RENDERER_MAX_FIF; i++)
+    {
+        VulkanAssert(vkCreateCommandPool(this->vkdevice, &poolcreateinfo, NULL, &this->frames[i].cmdpool));
+    
+        buffallocinfo = {};
+        buffallocinfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        buffallocinfo.pNext = NULL;
+        buffallocinfo.commandPool = this->frames[i].cmdpool;
+        buffallocinfo.commandBufferCount = 1;
+        buffallocinfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+
+        VulkanAssert(vkAllocateCommandBuffers(this->vkdevice, &buffallocinfo, &this->frames[i].maincmdbuffer));
+    }
 }
 
 void Renderer::MakeSwapchain(int w, int h)
@@ -91,6 +130,7 @@ void Renderer::MakeSwapchain(int w, int h)
     builder.add_image_usage_flags(VK_IMAGE_USAGE_TRANSFER_DST_BIT);
 
     vkbswapchain = builder.build().value();
+    this->swapchain = vkbswapchain.swapchain;
     this->swapchainextent = vkbswapchain.extent;
     this->swapchainimages = vkbswapchain.get_images().value();
     this->swapchainimageviews = vkbswapchain.get_image_views().value();
@@ -135,6 +175,11 @@ void Renderer::MakeDevice(void)
     
     this->vkphysicaldevice = vkbdevice.physical_device;
     this->vkdevice = vkbdevice.device;
+
+    // Queues
+
+    this->queues[RENDERER_QUEUE_GRAPHICS].queue = vkbdevice.get_queue(vkb::QueueType::graphics).value();
+    this->queues[RENDERER_QUEUE_GRAPHICS].family = vkbdevice.get_queue_index(vkb::QueueType::graphics).value();
 }
 
 void Renderer::MakeSurface(void)
@@ -179,6 +224,7 @@ void Renderer::MakeVulkan(void)
     MakeDevice();
     glfwGetWindowSize(win, &w, &h);
     MakeSwapchain(w, h);
+    MakeCommandStructures();
 }
 
 void Renderer::MakeWindow(void)

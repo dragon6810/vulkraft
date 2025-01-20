@@ -6,19 +6,27 @@
 #include <GLFW/glfw3.h>
 #include <VkBootstrap.h>
 
-// what is the maximum number of cpu threads we'll use while rendering?
-#define RENDERER_THREAD_COUNT 1
+#define RENDERER_MAX_FIF 2
 
-#define RENDERER_QUEUE_COUNT 4
+#define RENDERER_QUEUE_COUNT 1
 #define RENDERER_QUEUE_GRAPHICS 0
-#define RENDERER_QUEUE_COMPUTE 1
-#define RENDERER_QUEUE_TRANSFER 2
-#define RENDERER_QUEUE_PRESENTATION 3
 
 #define VulkanAssert(result) Renderer::VulkanAssertImpl((result), #result, __FILE__, __LINE__)
 
 class Renderer
 {
+public:
+    struct FrameData
+    {
+        VkCommandPool cmdpool;
+        VkCommandBuffer maincmdbuffer;
+    };
+
+    struct Queue
+    {
+        VkQueue queue;
+        unsigned int family;
+    };
 private:
     bool initialized = false;
     int framenum = 0;
@@ -33,12 +41,17 @@ private:
     VkPhysicalDevice vkphysicaldevice;
     VkDevice vkdevice;
     VkSurfaceKHR surface;
-    
+
     VkSwapchainKHR swapchain;
     VkFormat swapchainimgformat;
     std::vector<VkImage> swapchainimages;
     std::vector<VkImageView> swapchainimageviews;
     VkExtent2D swapchainextent;
+
+    unsigned long int curframe = 0;
+    FrameData frames[RENDERER_MAX_FIF];
+
+    Queue queues[RENDERER_QUEUE_COUNT];
 private:
     void MakeWindow(void);
     void MakeVulkan(void);
@@ -46,6 +59,7 @@ private:
     void MakeSurface(void);
     void MakeDevice(void);
     void MakeSwapchain(int w, int h);
+    void MakeCommandStructures(void);
 
     void DestroySwapchain(void);
     void Cleanup(void);
@@ -55,4 +69,6 @@ public:
     void Initialize(void);
     void Launch(void);
     void Kill(void);
+
+    FrameData* GetFrame(void);
 };
