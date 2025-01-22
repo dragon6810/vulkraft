@@ -7,6 +7,7 @@
 #include <VkBootstrap.h>
 
 #include <Testing/Testing.h>
+#include <Renderer/VulkanHelper.h>
 
 #define RENDERER_DOVALIDATIONLAYERS true
 #define RENDERER_VERBOSE_LOGGING true
@@ -14,6 +15,8 @@
 #define RENDERER_DEVICE_GFX 0
 
 #define RENDERER_USE_VALIDATION_LAYERS true
+
+#define S_TO_NS(s) (1000000000 * s)
 
 void Renderer::VulkanAssertImpl(VkResult result, const char* expr, const char* file, int line)
 {
@@ -78,7 +81,13 @@ void Renderer::Cleanup(void)
     vkDeviceWaitIdle(this->vkdevice);
 
     for(i=0; i<RENDERER_MAX_FIF; i++)
+    {
         vkDestroyCommandPool(this->vkdevice, this->frames[i].cmdpool, NULL);
+
+        vkDestroyFence(this->vkdevice, this->frames[i].renderfence, NULL);
+        vkDestroySemaphore(this->vkdevice, this->frames[i].rendersemaphore, NULL);
+        vkDestroySemaphore(this->vkdevice, this->frames[i].swapchainsemaphore, NULL);
+    }
 
     DestroySwapchain();
     vkDestroyDevice(this->vkdevice, NULL);
@@ -87,6 +96,93 @@ void Renderer::Cleanup(void)
     vkDestroyInstance(this->vkinstance, NULL);
     glfwDestroyWindow(win);
     glfwTerminate();
+}
+
+void Renderer::Draw(void)
+{
+    uint32_t iswapchainimg;
+    VkCommandBufferBeginInfo cmdbuffinfo;
+    VkClearColorValue clearcol;
+    VkImageSubresourceRange clearrange;
+    VkPipelineStageFlags dstmask;
+    VkSubmitInfo queuesubmitinfo;
+    VkPresentInfoKHR presentinfo;
+
+    VulkanAssert(vkWaitForFences(this->vkdevice, 1, &GetFrame()->renderfence, true, S_TO_NS(1)));
+    VulkanAssert(vkResetFences(this->vkdevice, 1, &GetFrame()->renderfence));
+
+    VulkanAssert(vkAcquireNextImageKHR(this->vkdevice, this->swapchain, S_TO_NS(1), GetFrame()->swapchainsemaphore, NULL, &iswapchainimg));
+
+    VulkanAssert(vkResetCommandBuffer(GetFrame()->maincmdbuffer, 0));
+    cmdbuffinfo = VulkanHelper::CmdBuffBeginInfo(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+    VulkanAssert(vkBeginCommandBuffer(GetFrame()->maincmdbuffer, &cmdbuffinfo));
+
+    VulkanHelper::ImgChangeLayout(GetFrame()->maincmdbuffer, swapchainimages[iswapchainimg], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+    clearcol = { { 0.0, sinf((float) curframe / 120.0) / 2.0f + 0.5f, 0.0 } };
+    clearrange = {};
+    clearrange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    clearrange.baseMipLevel = 0;
+    clearrange.levelCount = VK_REMAINING_MIP_LEVELS;
+    clearrange.baseArrayLayer = 0;
+    clearrange.layerCount = VK_REMAINING_ARRAY_LAYERS;
+    vkCmdClearColorImage(GetFrame()->maincmdbuffer, swapchainimages[iswapchainimg], VK_IMAGE_LAYOUT_GENERAL, &clearcol, 1, &clearrange);
+    VulkanHelper::ImgChangeLayout(GetFrame()->maincmdbuffer, swapchainimages[iswapchainimg], VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+
+    VulkanAssert(vkEndCommandBuffer(GetFrame()->maincmdbuffer));
+
+    dstmask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+
+    queuesubmitinfo = {};
+    queuesubmitinfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    queuesubmitinfo.pNext = NULL;
+    queuesubmitinfo.waitSemaphoreCount = 1;
+    queuesubmitinfo.pWaitSemaphores = &GetFrame()->swapchainsemaphore;
+    queuesubmitinfo.pWaitDstStageMask = &dstmask;
+    queuesubmitinfo.commandBufferCount = 1;
+    queuesubmitinfo.pCommandBuffers = &GetFrame()->maincmdbuffer;
+    queuesubmitinfo.signalSemaphoreCount = 1;
+    queuesubmitinfo.pSignalSemaphores = &GetFrame()->rendersemaphore;
+
+    VulkanAssert(vkQueueSubmit(this->queues[RENDERER_QUEUE_GRAPHICS].queue, 1, &queuesubmitinfo, GetFrame()->renderfence));
+
+    presentinfo = {};
+    presentinfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+    presentinfo.pNext = NULL;
+    presentinfo.swapchainCount = 1;
+    presentinfo.pSwapchains = &this->swapchain;
+    presentinfo.waitSemaphoreCount = 1;
+    presentinfo.pWaitSemaphores = &GetFrame()->rendersemaphore;
+    presentinfo.pImageIndices = &iswapchainimg;
+
+    VulkanAssert(vkQueuePresentKHR(this->queues[RENDERER_QUEUE_GRAPHICS].queue, &presentinfo));
+
+    curframe++;
+}
+
+void Renderer::MakeSyncStructures(void)
+{
+    int i;
+
+    VkFenceCreateInfo fencecreateinfo;
+    VkSemaphoreCreateInfo semaphorecreateinfo;
+
+    fencecreateinfo = {};
+    fencecreateinfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    fencecreateinfo.pNext = NULL;
+    fencecreateinfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+
+    semaphorecreateinfo = {};
+    semaphorecreateinfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    semaphorecreateinfo.pNext = NULL;
+    semaphorecreateinfo.flags = 0;
+
+    for(i=0; i<RENDERER_MAX_FIF; i++)
+    {
+        VulkanAssert(vkCreateFence(this->vkdevice, &fencecreateinfo, NULL, &this->frames[i].renderfence));
+
+        VulkanAssert(vkCreateSemaphore(this->vkdevice, &semaphorecreateinfo, NULL, &this->frames[i].rendersemaphore));
+        VulkanAssert(vkCreateSemaphore(this->vkdevice, &semaphorecreateinfo, NULL, &this->frames[i].swapchainsemaphore));
+    }
 }
 
 void Renderer::MakeCommandStructures(void)
@@ -225,6 +321,7 @@ void Renderer::MakeVulkan(void)
     glfwGetWindowSize(win, &w, &h);
     MakeSwapchain(w, h);
     MakeCommandStructures();
+    MakeSyncStructures();
 }
 
 void Renderer::MakeWindow(void)
@@ -247,6 +344,8 @@ void Renderer::Launch(void)
     while(!glfwWindowShouldClose(win))
     {
         glfwPollEvents();
+
+        Draw();
     }
 }
 

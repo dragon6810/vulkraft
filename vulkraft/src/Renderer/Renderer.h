@@ -20,6 +20,10 @@ public:
     {
         VkCommandPool cmdpool;
         VkCommandBuffer maincmdbuffer;
+
+        VkFence renderfence;
+        VkSemaphore rendersemaphore;
+        VkSemaphore swapchainsemaphore;
     };
 
     struct Queue
@@ -60,6 +64,9 @@ private:
     void MakeDevice(void);
     void MakeSwapchain(int w, int h);
     void MakeCommandStructures(void);
+    void MakeSyncStructures(void);
+
+    void Draw(void);
 
     void DestroySwapchain(void);
     void Cleanup(void);

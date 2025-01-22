@@ -2,7 +2,7 @@
 
 sh configure.sh
 cd bin
-if make; then
+if make VERBOSE=1; then
     cd ../run
     ../bin/bin/vulkraft
 fi
