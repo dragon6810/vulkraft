@@ -26,6 +26,7 @@ include_directories(${Vulkan_INCLUDE_DIRS})
 include_directories(${GLFW_INCLUDE_DIRS})
 include_directories(${GLM_INCLUDE_DIR})
 include_directories(lib/vkbootstrap/inc)
+include_directories(lib/vma/inc)
 include_directories(src/)
 
 # Source files

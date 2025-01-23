@@ -5,6 +5,8 @@
 #include <vector>
 
 #include <VkBootstrap.h>
+#define VMA_IMPLEMENTATION
+#include <vk_mem_alloc.h>
 
 #include <Testing/Testing.h>
 #include <Renderer/VulkanHelper.h>
@@ -62,13 +64,80 @@ Renderer::FrameData* Renderer::GetFrame(void)
     return &this->frames[this->curframe % RENDERER_MAX_FIF];
 }
 
-void Renderer::DestroySwapchain(void)
+void Renderer::CleanupCommandPools(void)
 {
     int i;
 
+    for(i=0; i<this->allcommandpools.size(); i++)
+        vkDestroyCommandPool(this->vkdevice, this->allcommandpools[i], NULL);
+}
+
+void Renderer::CleanupFences(void)
+{
+    int i;
+
+    for(i=0; i<this->allfences.size(); i++)
+        vkDestroyFence(this->vkdevice, this->allfences[i], NULL);
+}
+
+void Renderer::CleanupSemaphores(void)
+{
+    int i;
+
+    for(i=0; i<this->allsemaphores.size(); i++)
+        vkDestroySemaphore(this->vkdevice, this->allsemaphores[i], NULL);
+}
+
+void Renderer::CleanupImageViews(void)
+{
+    int i;
+
+    for(i=0; i<this->allimageviews.size(); i++)
+        vkDestroyImageView(this->vkdevice, this->allimageviews[i], NULL);
+}
+
+void Renderer::CleanupImages(void)
+{
+    int i;
+
+    for(i=0; i<this->allimages.size(); i++)
+        vkDestroyImage(this->vkdevice, this->allimages[i], NULL); 
+}
+
+void Renderer::CleanupSwapchain(void)
+{
     vkDestroySwapchainKHR(this->vkdevice, this->swapchain, NULL);
-    for(i=0; i<this->swapchainimageviews.size(); i++)
-        vkDestroyImageView(this->vkdevice, this->swapchainimageviews[i], NULL);
+}
+
+void Renderer::CleanupAllocator(void)
+{
+    vmaDestroyAllocator(this->allocator);
+}
+
+void Renderer::CleanupDevice(void)
+{
+    vkDestroyDevice(this->vkdevice, NULL);
+}
+
+void Renderer::CleanupSurface(void)
+{
+    vkDestroySurfaceKHR(this->vkinstance, this->surface, NULL);
+}
+
+void Renderer::CleanupDebugMessenger(void)
+{
+    vkb::destroy_debug_utils_messenger(this->vkinstance, this->debugmessenger);
+}
+
+void Renderer::CleanupInstance(void)
+{
+    vkDestroyInstance(this->vkinstance, NULL);
+}
+
+void Renderer::CleanupGLFW(void)
+{
+    glfwDestroyWindow(win);
+    glfwTerminate();
 }
 
 void Renderer::Cleanup(void)
@@ -80,30 +149,28 @@ void Renderer::Cleanup(void)
 
     vkDeviceWaitIdle(this->vkdevice);
 
-    for(i=0; i<RENDERER_MAX_FIF; i++)
-    {
-        vkDestroyCommandPool(this->vkdevice, this->frames[i].cmdpool, NULL);
+    this->deletionqueue.Flush();
+}
 
-        vkDestroyFence(this->vkdevice, this->frames[i].renderfence, NULL);
-        vkDestroySemaphore(this->vkdevice, this->frames[i].rendersemaphore, NULL);
-        vkDestroySemaphore(this->vkdevice, this->frames[i].swapchainsemaphore, NULL);
-    }
+void Renderer::DrawBackground(VkCommandBuffer cmd)
+{
+    VkClearColorValue clearcol;
+    VkImageSubresourceRange clearrange;
 
-    DestroySwapchain();
-    vkDestroyDevice(this->vkdevice, NULL);
-    vkDestroySurfaceKHR(this->vkinstance, this->surface, NULL);
-    vkb::destroy_debug_utils_messenger(this->vkinstance, this->debugmessenger);
-    vkDestroyInstance(this->vkinstance, NULL);
-    glfwDestroyWindow(win);
-    glfwTerminate();
+    clearcol = { { 0.0, sinf((float) curframe / 120.0) / 2.0f + 0.5f, 0.0 } };
+    clearrange = {};
+    clearrange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    clearrange.baseMipLevel = 0;
+    clearrange.levelCount = VK_REMAINING_MIP_LEVELS;
+    clearrange.baseArrayLayer = 0;
+    clearrange.layerCount = VK_REMAINING_ARRAY_LAYERS;
+    vkCmdClearColorImage(cmd, this->drawimg.img, VK_IMAGE_LAYOUT_GENERAL, &clearcol, 1, &clearrange);
 }
 
 void Renderer::Draw(void)
 {
     uint32_t iswapchainimg;
     VkCommandBufferBeginInfo cmdbuffinfo;
-    VkClearColorValue clearcol;
-    VkImageSubresourceRange clearrange;
     VkPipelineStageFlags dstmask;
     VkSubmitInfo queuesubmitinfo;
     VkPresentInfoKHR presentinfo;
@@ -117,16 +184,17 @@ void Renderer::Draw(void)
     cmdbuffinfo = VulkanHelper::CmdBuffBeginInfo(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
     VulkanAssert(vkBeginCommandBuffer(GetFrame()->maincmdbuffer, &cmdbuffinfo));
 
-    VulkanHelper::ImgChangeLayout(GetFrame()->maincmdbuffer, swapchainimages[iswapchainimg], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
-    clearcol = { { 0.0, sinf((float) curframe / 120.0) / 2.0f + 0.5f, 0.0 } };
-    clearrange = {};
-    clearrange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    clearrange.baseMipLevel = 0;
-    clearrange.levelCount = VK_REMAINING_MIP_LEVELS;
-    clearrange.baseArrayLayer = 0;
-    clearrange.layerCount = VK_REMAINING_ARRAY_LAYERS;
-    vkCmdClearColorImage(GetFrame()->maincmdbuffer, swapchainimages[iswapchainimg], VK_IMAGE_LAYOUT_GENERAL, &clearcol, 1, &clearrange);
-    VulkanHelper::ImgChangeLayout(GetFrame()->maincmdbuffer, swapchainimages[iswapchainimg], VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    this->drawimgextent.width = this->drawimg.extent.width;
+    this->drawimgextent.height = this->drawimg.extent.height;
+
+    VulkanHelper::ImgChangeLayout(GetFrame()->maincmdbuffer, this->drawimg.img, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+    
+    DrawBackground(GetFrame()->maincmdbuffer);
+
+    VulkanHelper::ImgChangeLayout(GetFrame()->maincmdbuffer, this->drawimg.img, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    VulkanHelper::ImgChangeLayout(GetFrame()->maincmdbuffer, this->swapchainimages[iswapchainimg], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    VulkanHelper::ImgBlitToImg(GetFrame()->maincmdbuffer, this->drawimg.img, this->swapchainimages[iswapchainimg], this->drawimgextent, this->swapchainextent);
+    VulkanHelper::ImgChangeLayout(GetFrame()->maincmdbuffer, this->swapchainimages[iswapchainimg], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
     VulkanAssert(vkEndCommandBuffer(GetFrame()->maincmdbuffer));
 
@@ -157,6 +225,22 @@ void Renderer::Draw(void)
     VulkanAssert(vkQueuePresentKHR(this->queues[RENDERER_QUEUE_GRAPHICS].queue, &presentinfo));
 
     curframe++;
+}
+
+void Renderer::PopulateDeletionQueue(void)
+{
+    this->deletionqueue.Push([&] { CleanupGLFW(); });
+    this->deletionqueue.Push([&] { CleanupInstance(); });
+    this->deletionqueue.Push([&] { CleanupDebugMessenger(); });
+    this->deletionqueue.Push([&] { CleanupSurface(); });
+    this->deletionqueue.Push([&] { CleanupDevice(); });
+    this->deletionqueue.Push([&] { CleanupAllocator(); });
+    this->deletionqueue.Push([&] { CleanupSwapchain(); });
+    this->deletionqueue.Push([&] { CleanupImages(); });
+    this->deletionqueue.Push([&] { CleanupImageViews(); });
+    this->deletionqueue.Push([&] { CleanupSemaphores(); });
+    this->deletionqueue.Push([&] { CleanupFences(); });
+    this->deletionqueue.Push([&] { CleanupCommandPools(); });
 }
 
 void Renderer::MakeSyncStructures(void)
@@ -215,8 +299,13 @@ void Renderer::MakeCommandStructures(void)
 
 void Renderer::MakeSwapchain(int w, int h)
 {
+    int i;
+
     vkb::SwapchainBuilder builder { this->vkphysicaldevice, this->vkdevice, this->surface };
     vkb::Swapchain vkbswapchain;
+    VkImageCreateInfo drawimgcreateinfo;
+    VkImageViewCreateInfo drawimgviewcreateinfo;
+    VmaAllocationCreateInfo drawimgalloccreateinfo;
 
     this->swapchainimgformat = VK_FORMAT_B8G8R8A8_UNORM;
 
@@ -230,6 +319,52 @@ void Renderer::MakeSwapchain(int w, int h)
     this->swapchainextent = vkbswapchain.extent;
     this->swapchainimages = vkbswapchain.get_images().value();
     this->swapchainimageviews = vkbswapchain.get_image_views().value();
+
+    for(i=0; i<this->swapchainimages.size(); i++)
+        this->allimages.push_back(this->swapchainimages[i]);
+
+    for(i=0; i<this->swapchainimageviews.size(); i++)
+        this->allimageviews.push_back(this->swapchainimageviews[i]);
+
+    this->drawimg.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+    this->drawimg.extent = { (unsigned int) w, (unsigned int) h, 1 };
+    drawimgcreateinfo = VulkanHelper::ImgCreateInfo
+    (
+        this->drawimg.format,
+        VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        this->drawimg.extent
+    );
+
+    drawimgalloccreateinfo = {};
+    drawimgalloccreateinfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+    drawimgalloccreateinfo.requiredFlags = VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    VulkanAssert(vmaCreateImage
+    (
+        this->allocator,
+        &drawimgcreateinfo,
+        &drawimgalloccreateinfo,
+        &this->drawimg.img,
+        &this->drawimg.alloc,
+        NULL
+    ));
+
+    drawimgviewcreateinfo = VulkanHelper::ImgViewCreateInfo(this->drawimg.format, this->drawimg.img, VK_IMAGE_ASPECT_COLOR_BIT);
+    VulkanAssert(vkCreateImageView(this->vkdevice, &drawimgviewcreateinfo, NULL, &this->drawimg.view));
+    this->allimages.push_back(this->drawimg.img);
+    this->allimageviews.push_back(this->drawimg.view);
+}
+
+void Renderer::MakeAllocator(void)
+{
+    VmaAllocatorCreateInfo createinfo;
+
+    createinfo = {};
+    createinfo.physicalDevice = this->vkphysicaldevice;
+    createinfo.device = this->vkdevice;
+    createinfo.instance = this->vkinstance;
+    createinfo.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
+
+    VulkanAssert(vmaCreateAllocator(&createinfo, &this->allocator));
 }
 
 void Renderer::MakeDevice(void)
@@ -318,6 +453,7 @@ void Renderer::MakeVulkan(void)
     MakeVkInstance();
     MakeSurface();
     MakeDevice();
+    MakeAllocator();
     glfwGetWindowSize(win, &w, &h);
     MakeSwapchain(w, h);
     MakeCommandStructures();
@@ -347,6 +483,8 @@ void Renderer::Launch(void)
 
         Draw();
     }
+
+    alldone = true;
 }
 
 void Renderer::Initialize(void)
@@ -356,6 +494,5 @@ void Renderer::Initialize(void)
     MakeWindow();
     MakeVulkan();
 
-    printf("renderer initialize.\n");
     this->initialized = true;
 }

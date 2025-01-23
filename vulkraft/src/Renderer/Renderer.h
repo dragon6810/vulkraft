@@ -5,6 +5,10 @@
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
 #include <VkBootstrap.h>
+#include <vk_mem_alloc.h>
+
+#include <Renderer/DeletionQueue.h>
+#include <Renderer/VulkanHelper.h>
 
 #define RENDERER_MAX_FIF 2
 
@@ -40,8 +44,11 @@ private:
 
     vkb::Instance vkbinstance;
 
+    DeletionQueue deletionqueue;
+
     VkInstance vkinstance;
     VkDebugUtilsMessengerEXT debugmessenger;
+    VmaAllocator allocator;
     VkPhysicalDevice vkphysicaldevice;
     VkDevice vkdevice;
     VkSurfaceKHR surface;
@@ -52,24 +59,51 @@ private:
     std::vector<VkImageView> swapchainimageviews;
     VkExtent2D swapchainextent;
 
+    std::vector<VkImage> allimages;
+    std::vector<VkImageView> allimageviews;
+    std::vector<VkSemaphore> allsemaphores;
+    std::vector<VkFence> allfences;
+    std::vector<VkCommandPool> allcommandpools;
+
+    VulkanHelper::AllocatedImg drawimg;
+    VkExtent2D drawimgextent;
+
     unsigned long int curframe = 0;
     FrameData frames[RENDERER_MAX_FIF];
 
     Queue queues[RENDERER_QUEUE_COUNT];
+public:
+    bool alldone = false;
 private:
     void MakeWindow(void);
     void MakeVulkan(void);
     void MakeVkInstance(void);
     void MakeSurface(void);
     void MakeDevice(void);
+    void MakeAllocator(void);
     void MakeSwapchain(int w, int h);
     void MakeCommandStructures(void);
     void MakeSyncStructures(void);
+    void PopulateDeletionQueue(void);
 
     void Draw(void);
+    void DrawBackground(VkCommandBuffer cmd);
 
     void DestroySwapchain(void);
     void Cleanup(void);
+
+    void CleanupGLFW(void);
+    void CleanupInstance(void);
+    void CleanupDebugMessenger(void);
+    void CleanupSurface(void);
+    void CleanupDevice(void);
+    void CleanupAllocator(void);
+    void CleanupSwapchain(void);
+    void CleanupImages(void);
+    void CleanupImageViews(void);
+    void CleanupSemaphores(void);
+    void CleanupFences(void);
+    void CleanupCommandPools(void);
 public:
     static void VulkanAssertImpl(VkResult result, const char* expr, const char* file, int line);
 
