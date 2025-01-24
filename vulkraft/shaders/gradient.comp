@@ -1,0 +1,28 @@
+// Compute Shader
+
+[numthreads(16, 16, 1)]
+void main(uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID, uint3 dispatchThreadID : SV_DispatchThreadID)
+{
+    RWTexture2D<min16float4> image : register(u0);
+    int2 texcoord;
+    uint2 size;
+    min16float4 col;
+
+    texcoord = int2(dispatchThreadID.xy);
+    image.GetDimensions(size.x, size.y);
+
+    if (texcoord.x < size.x && texcoord.y < size.y)
+    {
+        col = min16float4(0.0, 0.0, 0.0, 1.0);
+        
+        // Equivalent of gl_LocalInvocationID in HLSL
+        if (groupThreadID.x != 0 && groupThreadID.y != 0)
+        {
+            col.x = min16float(texcoord.x) / size.x;
+            col.y = min16float(texcoord.y) / size.y;
+        }
+
+        // Store the color value in the image
+        image[texcoord] = col;
+    }
+}
