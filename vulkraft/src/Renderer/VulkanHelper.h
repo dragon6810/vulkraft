@@ -21,4 +21,6 @@ public:
     static VkImageViewCreateInfo ImgViewCreateInfo(VkFormat format, VkImage img, VkImageAspectFlags aspectflags);
     static void ImgChangeLayout(VkCommandBuffer cmd, VkImage img, VkImageLayout oldlay, VkImageLayout newlay);
     static void ImgBlitToImg(VkCommandBuffer cmd, VkImage src, VkImage dst, VkExtent2D srcext, VkExtent2D dstext);
+
+    static bool ShaderLoadModule(VkDevice device, const char* filepath, VkShaderModule* module);
 };

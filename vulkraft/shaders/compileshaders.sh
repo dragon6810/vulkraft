@@ -22,7 +22,7 @@ for EXT in "${EXTENSIONS[@]}"; do
 
     # Copy the file only if it doesn't exist in the destination or if the source file is newer
     if [ ! -f "$DEST_FILE" ] || [ "$FILE" -nt "$DEST_FILE" ]; then
-        "$DIR/glslc" -o "$DEST_FILE" -x hlsl --target-env=vulkan1.2 "$FILE"
+        "glslc" -o "$DEST_FILE" -x glsl --target-env=vulkan1.2 "$FILE"
     fi
   done
 done

@@ -10,6 +10,7 @@
 
 #include <Testing/Testing.h>
 #include <Renderer/VulkanHelper.h>
+#include <Renderer/DescriptorLayoutBuilder.h>
 
 #define RENDERER_DOVALIDATIONLAYERS true
 #define RENDERER_VERBOSE_LOGGING true
@@ -64,6 +65,24 @@ Renderer::FrameData* Renderer::GetFrame(void)
     return &this->frames[this->curframe % RENDERER_MAX_FIF];
 }
 
+void Renderer::CleanupPipelineLayouts(void)
+{
+    vkDestroyPipelineLayout(this->vkdevice, this->gradpipelinelayout, NULL);
+}
+
+void Renderer::CleanupPipelines(void)
+{
+    vkDestroyPipeline(this->vkdevice, this->gradpipeline, NULL);
+}
+
+void Renderer::CleanupDescriptorAllocators(void)
+{
+    int i;
+
+    for(i=0; i<this->alldescriptorallocators.size(); i++)
+        this->alldescriptorallocators[i]->DestroyPool();
+}
+
 void Renderer::CleanupCommandPools(void)
 {
     int i;
@@ -96,17 +115,17 @@ void Renderer::CleanupImageViews(void)
         vkDestroyImageView(this->vkdevice, this->allimageviews[i], NULL);
 }
 
+void Renderer::CleanupSwapchain(void)
+{
+    vkDestroySwapchainKHR(this->vkdevice, this->swapchain, NULL);
+}
+
 void Renderer::CleanupImages(void)
 {
     int i;
 
     for(i=0; i<this->allimages.size(); i++)
         vkDestroyImage(this->vkdevice, this->allimages[i], NULL); 
-}
-
-void Renderer::CleanupSwapchain(void)
-{
-    vkDestroySwapchainKHR(this->vkdevice, this->swapchain, NULL);
 }
 
 void Renderer::CleanupAllocator(void)
@@ -156,6 +175,11 @@ void Renderer::DrawBackground(VkCommandBuffer cmd)
 {
     VkClearColorValue clearcol;
     VkImageSubresourceRange clearrange;
+
+	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, gradpipeline);
+	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, gradpipelinelayout, 0, 1, &drawimgdescriptors, 0, nullptr);
+	vkCmdDispatch(cmd, std::ceil(drawimgextent.width / 16.0), std::ceil(drawimgextent.height / 16.0), 1);
+    return;
 
     clearcol = { { 0.0, sinf((float) curframe / 120.0) / 2.0f + 0.5f, 0.0 } };
     clearrange = {};
@@ -235,12 +259,89 @@ void Renderer::PopulateDeletionQueue(void)
     this->deletionqueue.Push([&] { CleanupSurface(); });
     this->deletionqueue.Push([&] { CleanupDevice(); });
     this->deletionqueue.Push([&] { CleanupAllocator(); });
-    this->deletionqueue.Push([&] { CleanupSwapchain(); });
     this->deletionqueue.Push([&] { CleanupImages(); });
+    this->deletionqueue.Push([&] { CleanupSwapchain(); });
     this->deletionqueue.Push([&] { CleanupImageViews(); });
     this->deletionqueue.Push([&] { CleanupSemaphores(); });
     this->deletionqueue.Push([&] { CleanupFences(); });
     this->deletionqueue.Push([&] { CleanupCommandPools(); });
+    this->deletionqueue.Push([&] { CleanupDescriptorAllocators(); });
+    this->deletionqueue.Push([&] { this->gpdescriptoralloc.DestroyPool(); });
+    this->deletionqueue.Push([&] { vkDestroyDescriptorSetLayout(this->vkdevice, this->drawimgdescriptorlayout, NULL); });
+    this->deletionqueue.Push([&] { CleanupPipelines(); });
+    this->deletionqueue.Push([&] { CleanupPipelineLayouts(); });
+}
+
+void Renderer::MakeGradientPipeline(void)
+{
+    VkPipelineLayoutCreateInfo layoutcreateinfo;
+    VkShaderModule compdrawshader;
+    VkPipelineShaderStageCreateInfo stagecreateinfo;
+    VkComputePipelineCreateInfo pipelinecreateinfo;
+
+    layoutcreateinfo = {};
+    layoutcreateinfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    layoutcreateinfo.pNext = NULL;
+    layoutcreateinfo.setLayoutCount = 1;
+    layoutcreateinfo.pSetLayouts = &this->drawimgdescriptorlayout;
+    VulkanAssert(vkCreatePipelineLayout(this->vkdevice, &layoutcreateinfo, NULL, &this->gradpipelinelayout));
+    
+    VulkraftAssert(VulkanHelper::ShaderLoadModule(this->vkdevice, "shaders/gradient", &compdrawshader));
+
+    stagecreateinfo = {};
+    stagecreateinfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stagecreateinfo.pNext = NULL;
+    stagecreateinfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    stagecreateinfo.module = compdrawshader;
+    stagecreateinfo.pName = "main";
+
+    pipelinecreateinfo = {};
+    pipelinecreateinfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipelinecreateinfo.pNext = NULL;
+    pipelinecreateinfo.layout = this->gradpipelinelayout;
+    pipelinecreateinfo.stage = stagecreateinfo;
+    VulkanAssert(vkCreateComputePipelines(this->vkdevice, VK_NULL_HANDLE, 1, &pipelinecreateinfo, NULL, &this->gradpipeline));
+
+    vkDestroyShaderModule(this->vkdevice, compdrawshader, nullptr);
+}
+
+void Renderer::MakePipelines(void)
+{
+    MakeGradientPipeline();
+}
+
+void Renderer::MakeDescriptors(void)
+{
+    std::vector<DescriptorAllocator::PoolSizeRatio> sizes;
+    DescriptorLayoutBuilder computedrawbuilder;
+    VkDescriptorImageInfo imginfo;
+    VkWriteDescriptorSet drawimgwrite;
+
+    this->gpdescriptoralloc = DescriptorAllocator(&this->vkdevice);
+    sizes = { { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1 } };
+    this->gpdescriptoralloc.InitializePool(10, sizes);
+
+    computedrawbuilder.AddBinding(0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
+    this->drawimgdescriptorlayout = computedrawbuilder.GenerateLayout
+    (
+        this->vkdevice,
+        VK_SHADER_STAGE_COMPUTE_BIT
+    );
+
+    this->drawimgdescriptors = this->gpdescriptoralloc.Allocate(this->drawimgdescriptorlayout);
+    imginfo = {};
+    imginfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+    imginfo.imageView = this->drawimg.view;
+    
+    drawimgwrite = {};
+    drawimgwrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    drawimgwrite.pNext = NULL;
+    drawimgwrite.dstBinding = 0;
+    drawimgwrite.dstSet = this->drawimgdescriptors;
+    drawimgwrite.descriptorCount = 1;
+    drawimgwrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    drawimgwrite.pImageInfo = &imginfo;
+    vkUpdateDescriptorSets(this->vkdevice, 1, &drawimgwrite, 0, NULL);
 }
 
 void Renderer::MakeSyncStructures(void)
@@ -285,6 +386,7 @@ void Renderer::MakeCommandStructures(void)
     for(i=0; i<RENDERER_MAX_FIF; i++)
     {
         VulkanAssert(vkCreateCommandPool(this->vkdevice, &poolcreateinfo, NULL, &this->frames[i].cmdpool));
+        this->allcommandpools.push_back(this->frames[i].cmdpool);
     
         buffallocinfo = {};
         buffallocinfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -320,8 +422,7 @@ void Renderer::MakeSwapchain(int w, int h)
     this->swapchainimages = vkbswapchain.get_images().value();
     this->swapchainimageviews = vkbswapchain.get_image_views().value();
 
-    for(i=0; i<this->swapchainimages.size(); i++)
-        this->allimages.push_back(this->swapchainimages[i]);
+    // vkDestroySwapchian destroys images, so dont add them to allimages
 
     for(i=0; i<this->swapchainimageviews.size(); i++)
         this->allimageviews.push_back(this->swapchainimageviews[i]);
@@ -458,6 +559,9 @@ void Renderer::MakeVulkan(void)
     MakeSwapchain(w, h);
     MakeCommandStructures();
     MakeSyncStructures();
+    MakeDescriptors();
+    MakePipelines();
+    PopulateDeletionQueue();
 }
 
 void Renderer::MakeWindow(void)

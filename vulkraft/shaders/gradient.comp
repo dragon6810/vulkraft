@@ -1,28 +1,24 @@
-// Compute Shader
+#version 460
 
-[numthreads(16, 16, 1)]
-void main(uint3 groupID : SV_GroupID, uint3 groupThreadID : SV_GroupThreadID, uint3 dispatchThreadID : SV_DispatchThreadID)
+layout (local_size_x = 16, local_size_y = 16) in;
+
+layout(rgba16f,set = 0, binding = 0) uniform image2D image;
+
+void main() 
 {
-    RWTexture2D<min16float4> image : register(u0);
-    int2 texcoord;
-    uint2 size;
-    min16float4 col;
+    ivec2 texelCoord = ivec2(gl_GlobalInvocationID.xy);
+	ivec2 size = imageSize(image);
 
-    texcoord = int2(dispatchThreadID.xy);
-    image.GetDimensions(size.x, size.y);
-
-    if (texcoord.x < size.x && texcoord.y < size.y)
+    if(texelCoord.x < size.x && texelCoord.y < size.y)
     {
-        col = min16float4(0.0, 0.0, 0.0, 1.0);
-        
-        // Equivalent of gl_LocalInvocationID in HLSL
-        if (groupThreadID.x != 0 && groupThreadID.y != 0)
-        {
-            col.x = min16float(texcoord.x) / size.x;
-            col.y = min16float(texcoord.y) / size.y;
-        }
+        vec4 color = vec4(0.0, 0.0, 0.0, 1.0);
 
-        // Store the color value in the image
-        image[texcoord] = col;
+        if(gl_LocalInvocationID.x != 0 && gl_LocalInvocationID.y != 0)
+        {
+            color.x = float(texelCoord.x)/(size.x);
+            color.y = float(texelCoord.y)/(size.y);	
+        }
+    
+        imageStore(image, texelCoord, color);
     }
 }

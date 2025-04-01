@@ -9,6 +9,7 @@
 
 #include <Renderer/DeletionQueue.h>
 #include <Renderer/VulkanHelper.h>
+#include <Renderer/DescriptorAllocator.h>
 
 #define RENDERER_MAX_FIF 2
 
@@ -64,9 +65,17 @@ private:
     std::vector<VkSemaphore> allsemaphores;
     std::vector<VkFence> allfences;
     std::vector<VkCommandPool> allcommandpools;
+    std::vector<DescriptorAllocator*> alldescriptorallocators;
 
     VulkanHelper::AllocatedImg drawimg;
     VkExtent2D drawimgextent;
+
+    DescriptorAllocator gpdescriptoralloc;
+    VkDescriptorSet drawimgdescriptors;
+    VkDescriptorSetLayout drawimgdescriptorlayout;
+
+    VkPipeline gradpipeline;
+	VkPipelineLayout gradpipelinelayout;
 
     unsigned long int curframe = 0;
     FrameData frames[RENDERER_MAX_FIF];
@@ -84,12 +93,15 @@ private:
     void MakeSwapchain(int w, int h);
     void MakeCommandStructures(void);
     void MakeSyncStructures(void);
+    void MakeDescriptors(void);
+    void MakePipelines(void);
     void PopulateDeletionQueue(void);
+
+    void MakeGradientPipeline(void);
 
     void Draw(void);
     void DrawBackground(VkCommandBuffer cmd);
 
-    void DestroySwapchain(void);
     void Cleanup(void);
 
     void CleanupGLFW(void);
@@ -98,12 +110,15 @@ private:
     void CleanupSurface(void);
     void CleanupDevice(void);
     void CleanupAllocator(void);
-    void CleanupSwapchain(void);
     void CleanupImages(void);
+    void CleanupSwapchain(void);
     void CleanupImageViews(void);
     void CleanupSemaphores(void);
     void CleanupFences(void);
     void CleanupCommandPools(void);
+    void CleanupDescriptorAllocators(void);
+    void CleanupPipelines(void);
+    void CleanupPipelineLayouts(void);
 public:
     static void VulkanAssertImpl(VkResult result, const char* expr, const char* file, int line);
 

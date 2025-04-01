@@ -1,5 +1,10 @@
 #include <Renderer/VulkanHelper.h>
 
+#include <vector>
+
+#include <Testing/Testing.h>
+#include <Renderer/Renderer.h>
+
 VkCommandBufferBeginInfo VulkanHelper::CmdBuffBeginInfo(VkCommandBufferUsageFlags flags)
 {
     VkCommandBufferBeginInfo begininfo;
@@ -117,4 +122,44 @@ void VulkanHelper::ImgBlitToImg(VkCommandBuffer cmd, VkImage src, VkImage dst, V
         &blitregion,
         VK_FILTER_LINEAR
     );
+}
+
+bool VulkanHelper::ShaderLoadModule(VkDevice device, const char* filepath, VkShaderModule* module)
+{
+    FILE *ptr;
+    std::string shadername;
+    long unsigned int length;
+    std::vector<unsigned int> ir;
+    VkShaderModuleCreateInfo createinfo;
+
+    VulkraftAssert(module);
+
+    if(strcmp(filepath + strlen(filepath) - 4, ".spv"))
+        shadername = std::string(filepath) + std::string(".spv");
+    else
+        shadername = std::string(filepath);
+
+    ptr = fopen(shadername.c_str(), "rb");
+    if(!ptr)
+    {
+        printf("Can't open shader \"%s\".\n", shadername.c_str());
+        return false;
+    }
+
+    fseek(ptr, 0, SEEK_END);
+    length = ftell(ptr);
+    fseek(ptr, 0, SEEK_SET);
+
+    ir.resize(length / sizeof(unsigned int));
+    fread(ir.data(), sizeof(unsigned int), ir.size(), ptr);
+    fclose(ptr);
+
+    createinfo = {};
+    createinfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    createinfo.pNext = NULL;
+    createinfo.codeSize = ir.size() * sizeof(unsigned int);
+    createinfo.pCode = ir.data();
+    VulkanAssert(vkCreateShaderModule(device, &createinfo, NULL, module));
+
+    return true;
 }
