@@ -364,10 +364,16 @@ void Renderer::MakeSyncStructures(void)
     for(i=0; i<RENDERER_MAX_FIF; i++)
     {
         VulkanAssert(vkCreateFence(this->vkdevice, &fencecreateinfo, NULL, &this->frames[i].renderfence));
+        this->allfences.push_back(this->frames[i].renderfence);
 
         VulkanAssert(vkCreateSemaphore(this->vkdevice, &semaphorecreateinfo, NULL, &this->frames[i].rendersemaphore));
         VulkanAssert(vkCreateSemaphore(this->vkdevice, &semaphorecreateinfo, NULL, &this->frames[i].swapchainsemaphore));
+        this->allsemaphores.push_back(this->frames[i].rendersemaphore);
+        this->allsemaphores.push_back(this->frames[i].swapchainsemaphore);
     }
+
+    VulkanAssert(vkCreateFence(this->vkdevice, &fencecreateinfo, NULL, &immfence));
+    this->allfences.push_back(immfence);
 }
 
 void Renderer::MakeCommandStructures(void)
@@ -397,6 +403,48 @@ void Renderer::MakeCommandStructures(void)
 
         VulkanAssert(vkAllocateCommandBuffers(this->vkdevice, &buffallocinfo, &this->frames[i].maincmdbuffer));
     }
+    
+    VulkanAssert(vkCreateCommandPool(this->vkdevice, &poolcreateinfo, NULL, &immcmdpool));
+    this->allcommandpools.push_back(immcmdpool);
+
+    buffallocinfo = {};
+    buffallocinfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    buffallocinfo.pNext = NULL;
+    buffallocinfo.commandPool = immcmdpool;
+    buffallocinfo.commandBufferCount = 1;
+    buffallocinfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    VulkanAssert(vkAllocateCommandBuffers(this->vkdevice, &buffallocinfo, &immcmdbuffer));
+}
+
+void Renderer::ImmediateSubmit(std::function<void(VkCommandBuffer cmd)>&& func)
+{
+    VkCommandBufferBeginInfo cmdbegininfo;
+    VkSubmitInfo submitinfo;
+
+    VulkanAssert(vkResetFences(this->vkdevice, 1, &this->immfence));
+	VulkanAssert(vkResetCommandBuffer(this->immcmdbuffer, 0));
+
+	cmdbegininfo = VulkanHelper::CmdBuffBeginInfo(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+
+	VulkanAssert(vkBeginCommandBuffer(this->immcmdbuffer, &cmdbegininfo));
+
+	func(this->immcmdbuffer);
+
+	VulkanAssert(vkEndCommandBuffer(this->immcmdbuffer));
+
+    submitinfo = {};
+    submitinfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitinfo.pNext = NULL;
+    submitinfo.waitSemaphoreCount = 0;
+    submitinfo.pWaitSemaphores = NULL;
+    submitinfo.pWaitDstStageMask = NULL;
+    submitinfo.commandBufferCount = 1;
+    submitinfo.pCommandBuffers = &this->immcmdbuffer;
+    submitinfo.signalSemaphoreCount = 0;
+    submitinfo.pSignalSemaphores = NULL;
+
+	VulkanAssert(vkQueueSubmit(this->queues[RENDERER_QUEUE_GRAPHICS].queue, 1, &submitinfo, this->immfence));
+	VulkanAssert(vkWaitForFences(this->vkdevice, 1, &this->immfence, true, 9999999999));
 }
 
 void Renderer::MakeSwapchain(int w, int h)

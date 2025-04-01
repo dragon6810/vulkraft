@@ -43,6 +43,19 @@
         "unordered_map": "cpp",
         "__tree": "cpp",
         "map": "cpp",
-        "set": "cpp"
+        "set": "cpp",
+        "__node_handle": "cpp",
+        "bitset": "cpp",
+        "charconv": "cpp",
+        "cinttypes": "cpp",
+        "istream": "cpp",
+        "ostream": "cpp",
+        "print": "cpp",
+        "queue": "cpp",
+        "shared_mutex": "cpp",
+        "span": "cpp",
+        "sstream": "cpp",
+        "stack": "cpp",
+        "complex": "cpp"
     }
 }

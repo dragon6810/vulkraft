@@ -60,6 +60,10 @@ private:
     std::vector<VkImageView> swapchainimageviews;
     VkExtent2D swapchainextent;
 
+    VkFence immfence;
+    VkCommandPool immcmdpool;
+    VkCommandBuffer immcmdbuffer;
+
     std::vector<VkImage> allimages;
     std::vector<VkImageView> allimageviews;
     std::vector<VkSemaphore> allsemaphores;
@@ -127,4 +131,5 @@ public:
     void Kill(void);
 
     FrameData* GetFrame(void);
+    void ImmediateSubmit(std::function<void(VkCommandBuffer cmd)>&& func);
 };
